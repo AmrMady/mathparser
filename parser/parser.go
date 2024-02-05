@@ -7,9 +7,7 @@ import (
 	"strings"
 )
 
-type MathParser struct{}
-
-func (parser MathParser) Parse(expression string) (float64, error) {
+func Parse(expression string) (float64, error) {
 	tokens := tokenize(expression)
 	outputQueue, err := shuntingYard(tokens)
 	if err != nil {
