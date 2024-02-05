@@ -20,14 +20,11 @@ import (
 )
 
 func main() {
-	// Create a new instance of MathParser
-	p := parser.MathParser{}
-
 	// Mathematical expression to be evaluated
 	expression := "(2 + 3) * 4 ^ 2 / (5 - 1)"
 
 	// Parse and evaluate the expression
-	result, err := p.Parse(expression)
+	result, err := parser.Parse(expression)
 	if err != nil {
 		fmt.Println("Error:", err)
 		return
