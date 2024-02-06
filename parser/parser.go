@@ -27,7 +27,7 @@ func tokenize(expression string) []string {
 	currentToken := ""
 
 	for _, char := range expression {
-		if isOperator(char) || char == '^' {
+		if isOperator(char) {
 			if currentToken != "" {
 				tokens = append(tokens, currentToken)
 				currentToken = ""
@@ -80,7 +80,7 @@ func shuntingYard(tokens []string) ([]string, error) {
 				return nil, fmt.Errorf("mismatched parentheses")
 			}
 			operatorStack = operatorStack[:len(operatorStack)-1]
-		} else if isOperator(rune(token[0])) || token == "^" {
+		} else if isOperator(rune(token[0])) {
 			for len(operatorStack) > 0 && (precedence[operatorStack[len(operatorStack)-1]] > precedence[token]) {
 				outputQueue = append(outputQueue, operatorStack[len(operatorStack)-1])
 				operatorStack = operatorStack[:len(operatorStack)-1]
@@ -110,7 +110,7 @@ func evaluateRPN(tokens []string) (float64, error) {
 				return 0, err
 			}
 			stack = append(stack, num)
-		} else if isOperator(rune(token[0])) || token == "^" {
+		} else if isOperator(rune(token[0])) {
 			if len(stack) < 2 {
 				return 0, fmt.Errorf("insufficient operands for operator %s", token)
 			}
