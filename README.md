@@ -20,8 +20,9 @@ import (
 )
 
 func main() {
-	// Mathematical expression to be evaluated
+	// Mathematical expressions to be evaluated
 	expression := "(2 + 3) * 4 ^ 2 / (5 - 1)"
+	expression2 := fmt.Sprintf("(%d + %f) * 4 ^ 2 / (%f - %f)", 2, 3.5, 5.7, 1.0)
 
 	// Parse and evaluate the expression
 	result, err := parser.Parse(expression)
@@ -29,7 +30,16 @@ func main() {
 		fmt.Println("Error:", err)
 		return
 	}
-
-	// Print the result
+	// Print the result: 20.000000
 	fmt.Printf("Result of '%s': %f\n", expression, result)
+
+	// Parse and evaluate the expression
+	result2, err := parser.Parse(expression2)
+	if err != nil {
+		fmt.Println("Error:", err)
+		return
+	}
+
+	// Print the result: 18.723404255
+	fmt.Printf("Result of '%s': %.9f\n", expression2, result2)
 }

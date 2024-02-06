@@ -2,9 +2,12 @@ package parser
 
 import (
 	"fmt"
-	"math"
-	"strconv"
+	"math/big"
 	"strings"
+)
+
+const (
+	precision uint = 512
 )
 
 func Parse(expression string) (float64, error) {
@@ -99,17 +102,18 @@ func shuntingYard(tokens []string) ([]string, error) {
 
 	return outputQueue, nil
 }
-
 func evaluateRPN(tokens []string) (float64, error) {
-	var stack []float64
+	var stack []*big.Float
 
 	for _, token := range tokens {
 		if isDigit(rune(token[0])) {
-			num, err := strconv.ParseFloat(token, 64)
+			f := new(big.Float).SetPrec(precision)
+			bigFloat, _, err := f.Parse(token, 10)
 			if err != nil {
+				fmt.Println("Error:", err)
 				return 0, err
 			}
-			stack = append(stack, num)
+			stack = append(stack, bigFloat)
 		} else if isOperator(rune(token[0])) {
 			if len(stack) < 2 {
 				return 0, fmt.Errorf("insufficient operands for operator %s", token)
@@ -118,23 +122,28 @@ func evaluateRPN(tokens []string) (float64, error) {
 			a := stack[len(stack)-2]
 			stack = stack[:len(stack)-2]
 
-			var result float64
+			var result big.Float
 			switch token {
 			case "+":
-				result = a + b
+				result.Add(a, b)
 			case "-":
-				result = a - b
+				result.Sub(a, b)
 			case "*":
-				result = a * b
+				result.Mul(a, b)
 			case "/":
-				if b == 0 {
+				if b.Sign() == 0 {
 					return 0, fmt.Errorf("division by zero")
 				}
-				result = a / b
+				result.Quo(a, b)
 			case "^":
-				result = math.Pow(a, b)
+				result = *new(big.Float).SetPrec(precision).SetFloat64(1)
+				exponent, _ := b.Int64()
+				for i := int64(0); i < exponent; i++ {
+					result.Mul(&result, a)
+				}
+
 			}
-			stack = append(stack, result)
+			stack = append(stack, &result)
 		}
 	}
 
@@ -142,5 +151,7 @@ func evaluateRPN(tokens []string) (float64, error) {
 		return 0, fmt.Errorf("invalid expression")
 	}
 
-	return stack[0], nil
+	result64, _ := stack[0].Float64()
+
+	return result64, nil
 }
