@@ -33,7 +33,7 @@ func tokenize(expression string) []string {
 				currentToken = ""
 			}
 			tokens = append(tokens, string(char))
-		} else if isDigit(char) || char == '.' {
+		} else if isDigit(char) {
 			currentToken += string(char)
 		} else if char == '(' || char == ')' {
 			if currentToken != "" {
