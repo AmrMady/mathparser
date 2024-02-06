@@ -136,11 +136,7 @@ func evaluateRPN(tokens []string) (float64, error) {
 				}
 				result.Quo(a, b)
 			case "^":
-				result = *new(big.Float).SetPrec(precision).SetFloat64(1)
-				exponent, _ := b.Int64()
-				for i := int64(0); i < exponent; i++ {
-					result.Mul(&result, a)
-				}
+				result = *binaryExponentiation(a, b)
 
 			}
 			stack = append(stack, &result)
@@ -154,4 +150,28 @@ func evaluateRPN(tokens []string) (float64, error) {
 	result64, _ := stack[0].Float64()
 
 	return result64, nil
+}
+
+func binaryExponentiation(base, exponent *big.Float) *big.Float {
+	// Convert exponent to int64
+	expInt, _ := exponent.Int64()
+
+	// Initialize result
+	result := new(big.Float).SetPrec(precision).SetFloat64(1)
+
+	// Iterate over the bits of the exponent
+	for expInt > 0 {
+		// If the least significant bit of the exponent is 1, multiply the result by the base
+		if expInt&1 == 1 {
+			result.Mul(result, base)
+		}
+
+		// Square the base for the next iteration
+		base.Mul(base, base)
+
+		// Shift the exponent to the right by 1 bit
+		expInt >>= 1
+	}
+
+	return result
 }
