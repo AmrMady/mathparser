@@ -3,6 +3,7 @@ package parser
 import (
 	"fmt"
 	"math/big"
+	"strconv"
 	"strings"
 )
 
@@ -10,7 +11,7 @@ const (
 	precision uint = 512
 )
 
-func Parse(expression string) (float64, error) {
+func ParseSimple(expression string) (float64, error) {
 	tokens := tokenize(expression)
 	outputQueue, err := shuntingYard(tokens)
 	if err != nil {
@@ -21,8 +22,28 @@ func Parse(expression string) (float64, error) {
 	if err != nil {
 		return 0, err
 	}
+	result64, _ := result.Float64()
 
-	return result, nil
+	return result64, nil
+}
+
+func ParseWithVariables(expression string, variables map[string]float64) (float64, error) {
+	substitutedExpression := substituteVariables(expression, variables)
+
+	return ParseSimple(substitutedExpression)
+}
+
+func substituteVariables(expression string, variables map[string]float64) string {
+	for varName := range variables {
+		placeholder := fmt.Sprintf("${%s}", varName)
+		expression = strings.Replace(expression, varName, placeholder, -1)
+	}
+	for varName, varValue := range variables {
+		placeholder := fmt.Sprintf("${%s}", varName)
+		formattedValue := strconv.FormatFloat(varValue, 'f', -1, 64)
+		expression = strings.Replace(expression, placeholder, formattedValue, -1)
+	}
+	return expression
 }
 
 func tokenize(expression string) []string {
@@ -102,76 +123,61 @@ func shuntingYard(tokens []string) ([]string, error) {
 
 	return outputQueue, nil
 }
-func evaluateRPN(tokens []string) (float64, error) {
+
+func evaluateRPN(tokens []string) (*big.Float, error) {
 	var stack []*big.Float
 
 	for _, token := range tokens {
 		if isDigit(rune(token[0])) {
-			f := new(big.Float).SetPrec(precision)
-			bigFloat, _, err := f.Parse(token, 10)
+			fmt.Println("token: ", token)
+			num, _, err := new(big.Float).SetPrec(precision).Parse(token, 10)
 			if err != nil {
-				fmt.Println("Error:", err)
-				return 0, err
+				return nil, err
 			}
-			stack = append(stack, bigFloat)
-		} else if isOperator(rune(token[0])) {
+			fmt.Println("num: ", num)
+			stack = append(stack, num)
+		} else {
 			if len(stack) < 2 {
-				return 0, fmt.Errorf("insufficient operands for operator %s", token)
+				return nil, fmt.Errorf("insufficient values in the stack for operation %s", token)
 			}
-			b := stack[len(stack)-1]
-			a := stack[len(stack)-2]
+			a, b := stack[len(stack)-2], stack[len(stack)-1]
 			stack = stack[:len(stack)-2]
 
-			var result big.Float
+			var result *big.Float
 			switch token {
 			case "+":
-				result.Add(a, b)
+				result = new(big.Float).SetPrec(precision).Add(a, b)
 			case "-":
-				result.Sub(a, b)
+				result = new(big.Float).SetPrec(precision).Sub(a, b)
 			case "*":
-				result.Mul(a, b)
+				result = new(big.Float).SetPrec(precision).Mul(a, b)
 			case "/":
-				if b.Sign() == 0 {
-					return 0, fmt.Errorf("division by zero")
+				if b.Cmp(new(big.Float).SetFloat64(0)) == 0 {
+					return nil, fmt.Errorf("division by zero")
 				}
-				result.Quo(a, b)
+				result = new(big.Float).SetPrec(precision).Quo(a, b)
 			case "^":
-				result = *binaryExponentiation(a, b)
-
+				result = binaryExponentiation(a, b)
 			}
-			stack = append(stack, &result)
+			stack = append(stack, result)
 		}
 	}
 
 	if len(stack) != 1 {
-		return 0, fmt.Errorf("invalid expression")
+		return nil, fmt.Errorf("evaluation error: stack has unexpected size")
 	}
-
-	result64, _ := stack[0].Float64()
-
-	return result64, nil
+	return stack[0], nil
 }
 
 func binaryExponentiation(base, exponent *big.Float) *big.Float {
-	// Convert exponent to int64
 	expInt, _ := exponent.Int64()
-
-	// Initialize result
 	result := new(big.Float).SetPrec(precision).SetFloat64(1)
-
-	// Iterate over the bits of the exponent
 	for expInt > 0 {
-		// If the least significant bit of the exponent is 1, multiply the result by the base
 		if expInt&1 == 1 {
-			result.Mul(result, base)
+			result.SetPrec(precision).Mul(result, base)
 		}
-
-		// Square the base for the next iteration
-		base.Mul(base, base)
-
-		// Shift the exponent to the right by 1 bit
+		base.SetPrec(precision).Mul(base, base)
 		expInt >>= 1
 	}
-
 	return result
 }
