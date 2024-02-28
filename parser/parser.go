@@ -5,6 +5,7 @@ import (
 	"math/big"
 	"strconv"
 	"strings"
+	"unicode"
 )
 
 const (
@@ -34,50 +35,50 @@ func ParseWithVariables(expression string, variables map[string]float64) (float6
 }
 
 func substituteVariables(expression string, variables map[string]float64) string {
-	for varName := range variables {
-		placeholder := fmt.Sprintf("${%s}", varName)
-		expression = strings.Replace(expression, varName, placeholder, -1)
-	}
 	for varName, varValue := range variables {
-		placeholder := fmt.Sprintf("${%s}", varName)
-		formattedValue := strconv.FormatFloat(varValue, 'f', -1, 64)
-		expression = strings.Replace(expression, placeholder, formattedValue, -1)
+		expression = strings.Replace(expression, varName, strconv.FormatFloat(varValue, 'f', -1, 64), -1)
 	}
 	return expression
 }
 
 func tokenize(expression string) []string {
 	var tokens []string
-	currentToken := ""
+	var currentToken strings.Builder
+	previousChar := ' ' // Initialize with a space to handle unary minus at the beginning
 
-	for _, char := range expression {
-		if isOperator(char) {
-			if currentToken != "" {
-				tokens = append(tokens, currentToken)
-				currentToken = ""
+	for i, char := range expression {
+		if unicode.IsDigit(char) || (char == '.' && i > 0 && unicode.IsDigit(rune(expression[i-1]))) {
+			currentToken.WriteRune(char)
+		} else if char == '-' && (i == 0 || previousChar == '(' || isOperator(previousChar, i-1, expression)) {
+			// Check if this '-' is unary
+			if currentToken.Len() > 0 {
+				tokens = append(tokens, currentToken.String())
+				currentToken.Reset()
 			}
-			tokens = append(tokens, string(char))
-		} else if isDigit(char) {
-			currentToken += string(char)
-		} else if char == '(' || char == ')' {
-			if currentToken != "" {
-				tokens = append(tokens, currentToken)
-				currentToken = ""
+			currentToken.WriteRune(char) // Start a new token with '-'
+		} else {
+			if currentToken.Len() > 0 {
+				tokens = append(tokens, currentToken.String())
+				currentToken.Reset()
 			}
-			tokens = append(tokens, string(char))
+			if char != ' ' {
+				tokens = append(tokens, string(char))
+			}
+		}
+		if char != ' ' {
+			previousChar = char
 		}
 	}
-
-	if currentToken != "" {
-		tokens = append(tokens, currentToken)
+	if currentToken.Len() > 0 {
+		tokens = append(tokens, currentToken.String())
 	}
 
 	return tokens
 }
 
-func isOperator(char rune) bool {
+func isOperator(char rune, charIndex int, fullString string) bool {
 	operators := "+-*/^"
-	return strings.ContainsRune(operators, char)
+	return strings.ContainsRune(operators, char) && char != '-' || (char == '-' && charIndex > 0 && !unicode.IsDigit(rune(fullString[charIndex-1])) && fullString[charIndex-1] != ')')
 }
 
 func isDigit(char rune) bool {
@@ -91,11 +92,12 @@ func shuntingYard(tokens []string) ([]string, error) {
 	precedence := map[string]int{"+": 1, "-": 1, "*": 2, "/": 2, "^": 3}
 
 	for _, token := range tokens {
-		if isDigit(rune(token[0])) {
+		switch {
+		case isDigit(rune(token[0])) || (token[0] == '-' && len(token) > 1): // Number or unary minus with a number
 			outputQueue = append(outputQueue, token)
-		} else if token == "(" {
+		case token == "(":
 			operatorStack = append(operatorStack, token)
-		} else if token == ")" {
+		case token == ")":
 			for len(operatorStack) > 0 && operatorStack[len(operatorStack)-1] != "(" {
 				outputQueue = append(outputQueue, operatorStack[len(operatorStack)-1])
 				operatorStack = operatorStack[:len(operatorStack)-1]
@@ -103,9 +105,9 @@ func shuntingYard(tokens []string) ([]string, error) {
 			if len(operatorStack) == 0 {
 				return nil, fmt.Errorf("mismatched parentheses")
 			}
-			operatorStack = operatorStack[:len(operatorStack)-1]
-		} else if isOperator(rune(token[0])) {
-			for len(operatorStack) > 0 && (precedence[operatorStack[len(operatorStack)-1]] > precedence[token]) {
+			operatorStack = operatorStack[:len(operatorStack)-1] // Pop the "("
+		default: // Operator
+			for len(operatorStack) > 0 && precedence[operatorStack[len(operatorStack)-1]] >= precedence[token] {
 				outputQueue = append(outputQueue, operatorStack[len(operatorStack)-1])
 				operatorStack = operatorStack[:len(operatorStack)-1]
 			}
@@ -128,38 +130,48 @@ func evaluateRPN(tokens []string) (*big.Float, error) {
 	var stack []*big.Float
 
 	for _, token := range tokens {
-		if isDigit(rune(token[0])) {
-			fmt.Println("token: ", token)
+		if isDigit(rune(token[0])) || (token[0] == '-' && len(token) > 1) { // Check for number or unary minus
 			num, _, err := new(big.Float).SetPrec(precision).Parse(token, 10)
 			if err != nil {
 				return nil, err
 			}
-			fmt.Println("num: ", num)
 			stack = append(stack, num)
-		} else {
-			if len(stack) < 2 {
+		} else { // Operator
+			if len(stack) < 2 && token != "-" { // Unary minus is an exception, can operate with one operand
 				return nil, fmt.Errorf("insufficient values in the stack for operation %s", token)
 			}
-			a, b := stack[len(stack)-2], stack[len(stack)-1]
-			stack = stack[:len(stack)-2]
 
-			var result *big.Float
-			switch token {
-			case "+":
-				result = new(big.Float).SetPrec(precision).Add(a, b)
-			case "-":
-				result = new(big.Float).SetPrec(precision).Sub(a, b)
-			case "*":
-				result = new(big.Float).SetPrec(precision).Mul(a, b)
-			case "/":
-				if b.Cmp(new(big.Float).SetFloat64(0)) == 0 {
-					return nil, fmt.Errorf("division by zero")
+			// Pop operands from the stack
+			var b, a *big.Float                  // Initialize operands
+			if token == "-" && len(stack) == 1 { // Unary minus case
+				a = stack[len(stack)-1]
+				stack = stack[:len(stack)-1]    // Pop one operand
+				result := new(big.Float).Neg(a) // Unary minus operation
+				stack = append(stack, result)
+			} else { // Binary operations
+				b = stack[len(stack)-1]
+				a = stack[len(stack)-2]
+				stack = stack[:len(stack)-2] // Pop two operands
+
+				var result *big.Float
+				switch token {
+				case "+":
+					result = new(big.Float).SetPrec(precision).Add(a, b)
+				case "-":
+					result = new(big.Float).SetPrec(precision).Sub(a, b)
+				case "*":
+					result = new(big.Float).SetPrec(precision).Mul(a, b)
+				case "/":
+					if b.Cmp(new(big.Float).SetPrec(precision).SetFloat64(0)) == 0 {
+						return nil, fmt.Errorf("division by zero")
+					}
+					result = new(big.Float).Quo(a, b)
+				case "^":
+					// Assume binaryExponentiation function is correctly implemented to handle big.Float
+					result = binaryExponentiation(a, b)
 				}
-				result = new(big.Float).SetPrec(precision).Quo(a, b)
-			case "^":
-				result = binaryExponentiation(a, b)
+				stack = append(stack, result)
 			}
-			stack = append(stack, result)
 		}
 	}
 
