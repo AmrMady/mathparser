@@ -7,7 +7,7 @@ import (
 	"github.com/AmrMady/mathparser/parser/customFunctions/basicMathematicalFunctions"
 	"github.com/AmrMady/mathparser/parser/customFunctions/computationalFunctions"
 	"math/big"
-	"strconv"
+	"sort"
 	"strings"
 )
 
@@ -130,38 +130,96 @@ func (p *Parser) isUnaryMinusContext() bool {
 }
 
 func (p *Parser) parseExpression() (Node, error) {
-	// First, check if the expression starts with a summation
+	var left Node
+	var err error
+
+	// Check if the current token is 'sum of' to handle summation
 	if p.currentToken.Type == TOKEN_SUM_OF {
-		return p.parseSummationExpression()
-	}
-
-	// Parse the first term
-	left, err := p.parseTerm()
-	if err != nil {
-		fmt.Println("parseExpression::parseTerm::left error: ", err)
-		return nil, err
-	}
-
-	// Handle binary operations
-	for p.isOperatorToken(p.currentToken.Type) {
-		op := p.currentToken // Store the current operator token
-		p.advance()          // Move past the operator
-
-		right, err := p.parseTerm() // Parse the next term
+		// Directly call parseSummation() without consuming 'sum of' here, as it will be consumed inside parseSummation()
+		left, err = p.parseSummation()
 		if err != nil {
-			fmt.Println("parseExpression::parseTerm::right error: ", err)
 			return nil, err
 		}
+	} else {
+		// Handle other types of expressions as before
+		left, err = p.parseTerm()
+		if err != nil {
+			return nil, err
+		}
+	}
 
-		// Construct a binary operation node from the left-hand side, operator, and right-hand side
-		left = &BinaryOpNode{
-			Left:  left,
-			Op:    op.Value,
-			Right: right,
+	// Process binary operations with their precedence.
+	for p.isOperatorToken(p.currentToken.Type) {
+		currentPrecedence := p.getPrecedence(p.currentToken.Type)
+		nextToken := p.peekToken()
+		nextPrecedence := p.getPrecedence(nextToken.Type)
+
+		// If the next operation has higher precedence, recursively parse the right-hand side as a new expression.
+		// This ensures that operations like multiplication/division are evaluated before addition/subtraction.
+		if currentPrecedence < nextPrecedence {
+			p.advance() // Move past the current operator to the next part of the expression
+
+			right, err := p.parseExpression() // Recursively parse the right-hand side as a new expression
+			if err != nil {
+				return nil, err
+			}
+
+			left = &BinaryOpNode{
+				Left:  left,
+				Op:    p.tokenTypeToString(p.prevToken.Type), // Use prevToken because advance() moved us forward
+				Right: right,
+			}
+		} else {
+			// For operators of the same precedence or lower, proceed with the current understanding.
+			opType := p.currentToken.Type
+			p.advance() // Move past the operator
+
+			right, err := p.parseTerm()
+			if err != nil {
+				return nil, err
+			}
+
+			left = &BinaryOpNode{
+				Left:  left,
+				Op:    p.tokenTypeToString(opType),
+				Right: right,
+			}
 		}
 	}
 
 	return left, nil
+}
+
+// getPrecedence returns the precedence level of the operator.
+func (p *Parser) getPrecedence(tokenType int) int {
+	switch tokenType {
+	case TOKEN_PLUS, TOKEN_MINUS:
+		return 1
+	case TOKEN_ASTERISK, TOKEN_SLASH:
+		return 2
+	case TOKEN_CARET:
+		return 3
+	default:
+		return 0
+	}
+}
+
+// tokenTypeToString converts a token type to its corresponding string representation for operators.
+func (p *Parser) tokenTypeToString(tokenType int) string {
+	switch tokenType {
+	case TOKEN_PLUS:
+		return "+"
+	case TOKEN_MINUS:
+		return "-"
+	case TOKEN_ASTERISK:
+		return "*"
+	case TOKEN_SLASH:
+		return "/"
+	case TOKEN_CARET:
+		return "^"
+	default:
+		return ""
+	}
 }
 
 func (p *Parser) peekToken() InputToken {
@@ -212,31 +270,6 @@ func (p *Parser) parseTerm() (Node, error) {
 
 	// For other cases, directly parse primary expressions (which includes factorial handling)
 	return p.parsePrimary()
-}
-
-func (p *Parser) parseFunctionCall(funcName string) (Node, error) {
-	p.advance() // Consume the '('
-
-	var args []Node
-	if p.currentToken.Type != TOKEN_RPAREN {
-		for p.currentToken.Type != TOKEN_RPAREN && p.currentToken.Type != TOKEN_EOF {
-			arg, err := p.parseExpression()
-			if err != nil {
-				return nil, err
-			}
-			args = append(args, arg)
-
-			if p.currentToken.Type == TOKEN_COMMA {
-				p.advance() // Skip over the comma to the next argument
-			}
-		}
-	}
-
-	if !p.expect(TOKEN_RPAREN) {
-		return nil, fmt.Errorf("expected closing parenthesis for function call, got %v", p.currentToken)
-	}
-
-	return &FunctionCallNode{Name: funcName, Arguments: args}, nil
 }
 
 // Improved version of parseSummationExpression to handle 'infinity' and variable substitutions.
@@ -330,48 +363,21 @@ func (p *Parser) isOperatorToken(tokenType int) bool {
 
 func (p *Parser) parseFunctionOrVariable() (Node, error) {
 	identifier := p.currentToken.Value
-	p.advance() // Move past the identifier token
-
-	// Check if the next token is an opening parenthesis, indicating a function call
-	if p.currentToken.Type == TOKEN_LPAREN {
-		return p.parseFunctionCall(identifier)
-	}
-
-	// Otherwise, treat the identifier as a variable
-	// Assuming you have a VariableNode struct to represent variables
-	return p.parseExpression()
-}
-
-func (p *Parser) parseOperand() (Node, error) {
-	switch p.currentToken.Type {
-	case TOKEN_NUMBER:
-		value, ok := new(big.Float).SetString(p.currentToken.Value)
-		if !ok {
-			return nil, fmt.Errorf("invalid number format: %s", p.currentToken.Value)
-		}
-		node := &ConstantNode{Value: value}
-		p.advance() // Move past the number token
-		return node, nil
-	case TOKEN_LPAREN:
-		p.advance()                      // Consume '('
-		node, err := p.parseExpression() // Parse the expression inside parentheses
-		if err != nil {
-			return nil, err
-		}
-		if !p.expect(TOKEN_RPAREN) {
-			return nil, fmt.Errorf("expected closing parenthesis, got %v", p.currentToken)
-		}
-		return node, nil
-	case TOKEN_IDENTIFIER:
-		return p.parseFunctionOrVariable()
-	default:
-		return nil, fmt.Errorf("unexpected token %v in operand", p.currentToken)
+	// Check what the next token is without consuming the current one.
+	if p.peekToken().Type == TOKEN_LPAREN {
+		// The identifier is followed by an LPAREN, so it's a function call.
+		return p.parseFunctionCall() // This will consume the identifier and LPAREN internally.
+	} else {
+		// It's just a variable. Advance past the identifier and return a VariableNode.
+		p.advance() // This was missing in the incorrect logic that led to the parse error.
+		return &VariableNode{Name: identifier}, nil
 	}
 }
 
 func (p *Parser) parsePrimary() (Node, error) {
 	var node Node
 	var err error
+
 	switch {
 	case p.currentToken.Type == TOKEN_NUMBER:
 		node, err = p.parseNumber()
@@ -379,11 +385,15 @@ func (p *Parser) parsePrimary() (Node, error) {
 			return nil, err
 		}
 	case p.currentToken.Type == TOKEN_IDENTIFIER:
-		node = &VariableNode{Name: p.currentToken.Value}
-		p.advance() // Move past the variable
+		if p.peekToken().Type == TOKEN_LPAREN {
+			node, err = p.parseFunctionCall()
+		} else {
+			node = &VariableNode{Name: p.currentToken.Value}
+			p.advance() // Move past the variable name
+		}
 	case p.currentToken.Type == TOKEN_LPAREN:
-		p.advance()                     // Consume '('
-		node, err = p.parseExpression() // Parse the sub-expression
+		p.advance() // Move past '('
+		node, err = p.parseExpression()
 		if err != nil {
 			return nil, err
 		}
@@ -394,13 +404,66 @@ func (p *Parser) parsePrimary() (Node, error) {
 		return nil, fmt.Errorf("unexpected token: %s", p.currentToken.Value)
 	}
 
-	// Check for a factorial operator after the primary expression
-	if p.currentToken.Type == TOKEN_FACTORIAL {
-		p.advance() // Consume '!'
+	// Handle potential factorial operations following the primary expression
+	for p.peekToken().Type == TOKEN_FACTORIAL {
+		p.advance() // Move to the factorial token
 		node = &FactorialNode{Operand: node}
+		p.advance() // Move past the factorial token
 	}
 
 	return node, nil
+}
+
+func (p *Parser) parseOperand() (Node, error) {
+	switch p.currentToken.Type {
+	case TOKEN_NUMBER:
+		value, ok := new(big.Float).SetString(p.currentToken.Value)
+		if !ok {
+			return nil, fmt.Errorf("invalid number format: %s", p.currentToken.Value)
+		}
+		p.advance() // Correctly move past the number.
+		return &ConstantNode{Value: value}, nil
+	case TOKEN_IDENTIFIER:
+		identifier := p.currentToken.Value
+		// Immediately check the next token without consuming the current one.
+		if p.peekToken().Type == TOKEN_LPAREN {
+			// If the next token is an LPAREN, this is a function call.
+			return p.parseFunctionCall() // parseFunctionCall now correctly uses the current state.
+		} else {
+			// It's a variable if there's no LPAREN next.
+			p.advance() // Move past the identifier before returning.
+			return &VariableNode{Name: identifier}, nil
+		}
+	default:
+		return nil, fmt.Errorf("unexpected operand token: %s", p.currentToken.Value)
+	}
+}
+
+func (p *Parser) parseFunctionCall() (Node, error) {
+	funcName := p.currentToken.Value
+	p.advance() // Move past the function name to the '('
+
+	var args []Node
+	p.advance() // Move past '(' to the first argument or the closing ')'
+
+	for p.currentToken.Type != TOKEN_RPAREN {
+		arg, err := p.parseExpression()
+		if err != nil {
+			return nil, err
+		}
+		args = append(args, arg)
+
+		if p.currentToken.Type == TOKEN_COMMA {
+			p.advance() // Move past ',' to the next argument
+		}
+	}
+
+	// Ensure we move past the closing ')' of the function call
+	if !p.expect(TOKEN_RPAREN) {
+		return nil, fmt.Errorf("expected ')', got %s", p.currentToken.Value)
+	}
+
+	return &FunctionCallNode{Name: funcName, Arguments: args}, nil
 }
 
 func (p *Parser) parseNumber() (Node, error) {
@@ -427,6 +490,54 @@ func (p *Parser) parseFactorial() (Node, error) {
 	return operand, nil
 }
 
+func (p *Parser) parseSummation() (*SummationNode, error) {
+	// Assume 'sum of' has been consumed
+	p.advance() // Move past 'sum of'
+
+	expression, err := p.parseExpression()
+	if err != nil {
+		return nil, err
+	}
+
+	if !p.expect(TOKEN_FROM) {
+		return nil, fmt.Errorf("expected 'from', found %v", p.currentToken.Value)
+	}
+
+	variable := p.currentToken.Value
+	p.advance() // Move past variable name
+
+	if !p.expect(TOKEN_EQUALS) {
+		return nil, fmt.Errorf("expected '=', found %v", p.currentToken.Value)
+	}
+
+	start, err := p.parseExpression()
+	if err != nil {
+		return nil, err
+	}
+
+	if !p.expect(TOKEN_TO) {
+		return nil, fmt.Errorf("expected 'to', found %v", p.currentToken.Value)
+	}
+
+	var end Node
+	if p.currentToken.Type == TOKEN_INFINITY {
+		end = &InfinityNode{} // Special handling for "infinity"
+		p.advance()           // Move past "infinity"
+	} else {
+		end, err = p.parseExpression()
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return &SummationNode{
+		Variable:   variable,
+		Start:      start,
+		End:        end,
+		Expression: expression,
+	}, nil
+}
+
 // Parse starts the parsing process and returns the AST.
 func (p *Parser) Parse() (Node, error) {
 	p.advance() // Initialize parsing by loading the first token
@@ -437,31 +548,6 @@ func (p *Parser) Parse() (Node, error) {
 	}
 	fmt.Println("AST generated successfully:", ast)
 	return ast, nil
-}
-
-// InvokeCustomFunctionOrAction tries to execute a function or action by name.
-func InvokeCustomFunctionOrAction(name string, precision uint, args ...*big.Float) ([]*big.Float, error) {
-	// First, check if it's a mathematical function with a known signature.
-	if function, ok := customFuncsMap[name]; ok {
-		result, err := function(precision, args...)
-		if err != nil {
-			return nil, err
-		}
-		// Wrap single *big.Float result in a slice for a unified interface.
-		return []*big.Float{result}, nil
-	}
-
-	// Next, check if it's a custom action which we assume returns a slice of *big.Float for this example.
-	if action, ok := customActionsMap[name]; ok {
-		// Assuming all actions follow a specific signature for this example.
-		actionFunc, ok := action.(func(precision uint, args ...*big.Float) ([]*big.Float, error))
-		if !ok {
-			return nil, fmt.Errorf("action '%s' does not match the expected signature", name)
-		}
-		return actionFunc(precision, args...)
-	}
-
-	return nil, fmt.Errorf("no function or action named '%s' found", name)
 }
 
 func ParseSimple(expression string) (float64, error) {
@@ -496,31 +582,6 @@ func ParseWithVariablesAndReturnString(expression string, variables map[string]f
 	return result.String(), nil
 }
 
-// ParseAndReturnString parses the expression and returns its result as a string.
-func ParseAndReturnString(expression string) (string, error) {
-	result, err := parse(expression)
-	if err != nil {
-		return "", err
-	}
-	// Using String() to get the exact representation without precision loss.
-	return result.String(), nil
-}
-
-// ParseAndReturnBigDecimal parses the expression and returns its result as a *big.Float.
-func ParseAndReturnBigDecimal(expression string) (*big.Float, error) {
-	return parse(expression) // Directly return the *big.Float result.
-}
-
-// ParseAndReturnBytes parses the expression and returns its result as bytes.
-func ParseAndReturnBytes(expression string) ([]byte, error) {
-	result, err := parse(expression)
-	if err != nil {
-		return nil, err
-	}
-	// Marshalling the *big.Float into bytes.
-	return result.GobEncode()
-}
-
 // parse is an unexported helper function to handle the common parsing logic.
 func parse(expression string) (*big.Float, error) {
 	lexer := NewLexer(expression) // Initialize the lexer with the expression.
@@ -530,10 +591,10 @@ func parse(expression string) (*big.Float, error) {
 	parser.advance()
 
 	// Parse the expression to generate the AST. Adjust this to your actual parse method.
-	ast, _ := parser.parseExpression() // Assuming this method exists and is implemented correctly.
-	if ast == nil {
-		fmt.Println("parse error: AST generation failed")
-		return nil, fmt.Errorf("parse error: AST generation failed")
+	ast, err := parser.parseExpression() // Assuming this method exists and is implemented correctly.
+	if err != nil {
+		fmt.Println("parse error: AST generation failed, error: ", err)
+		return nil, fmt.Errorf("parse error: AST generation failed, error: %v", err)
 	}
 	fmt.Println("ast: ", ast)
 
@@ -542,8 +603,19 @@ func parse(expression string) (*big.Float, error) {
 }
 
 func substituteVariables(expression string, variables map[string]float64) string {
-	for varName, varValue := range variables {
-		expression = strings.Replace(expression, varName, strconv.FormatFloat(varValue, 'f', -1, 64), -1)
+	var sortedVars []string
+	for k := range variables {
+		sortedVars = append(sortedVars, k)
+	}
+	// Sort variables by length in descending order to replace longer names first
+	sort.Slice(sortedVars, func(i, j int) bool {
+		return len(sortedVars[i]) > len(sortedVars[j])
+	})
+
+	for _, varName := range sortedVars {
+		varValue := variables[varName]
+		// Use a more specific substitution method to avoid partial matches
+		expression = strings.Replace(expression, varName, fmt.Sprintf("%f", varValue), -1)
 	}
 	return expression
 }
@@ -580,47 +652,7 @@ func evaluate(node Node) (*big.Float, error) {
 		}
 
 	case *SummationNode:
-		sum := big.NewFloat(0).SetPrec(precision)
-		startVal, err := evaluate(n.Start)
-		if err != nil {
-			return nil, err
-		}
-		var endVal *big.Float
-		if _, ok := n.End.(*InfinityNode); !ok {
-			endVal, err = evaluate(n.End)
-			if err != nil {
-				return nil, err
-			}
-		}
-
-		// Temporarily store the original value of the variable, if it exists
-		origVal, origValExists := variableContext[n.Variable]
-
-		// Evaluate the summation
-		for i := new(big.Float).SetPrec(precision).Set(startVal); endVal == nil || i.SetPrec(precision).Cmp(endVal) <= 0; i.SetPrec(precision).Add(i, big.NewFloat(1)) {
-			// Set the current iteration value in the variable context
-			variableContext[n.Variable] = i
-
-			termVal, err := evaluate(n.Expression)
-			if err != nil {
-				return nil, err
-			}
-			sum.Add(sum, termVal)
-
-			// Check for convergence if the series is infinite
-			if endVal == nil && termVal.SetPrec(precision).Abs(termVal).Cmp(big.NewFloat(epsilon)) < 0 {
-				break // Assumed convergence
-			}
-		}
-
-		// Restore the original variable value, if it was previously defined
-		if origValExists {
-			variableContext[n.Variable] = origVal
-		} else {
-			delete(variableContext, n.Variable) // Clean up the temporary variable entry
-		}
-
-		return sum, nil
+		return evaluateSummationNode(n)
 
 	case *ConstantNode:
 		fmt.Println("ConstantNode n: ", n)
@@ -718,4 +750,100 @@ func evaluate(node Node) (*big.Float, error) {
 		fmt.Println("default n: ", n)
 		return nil, fmt.Errorf("unsupported node type")
 	}
+}
+
+func evaluateSummationNode(node *SummationNode) (*big.Float, error) {
+	sum := big.NewFloat(0).SetPrec(precision)
+	startVal, err := evaluate(node.Start)
+	if err != nil {
+		return nil, err
+	}
+
+	var endVal *big.Float
+	isInfinity := false
+	if _, ok := node.End.(*InfinityNode); ok {
+		isInfinity = true
+	} else {
+		endVal, err = evaluate(node.End)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	k := new(big.Float).Set(startVal)
+	for ; isInfinity || k.Cmp(endVal) <= 0; k.Add(k, big.NewFloat(1)) {
+		setVariableContext(node.Variable, k)
+		termVal, err := evaluate(node.Expression)
+		if err != nil {
+			return nil, err
+		}
+		sum.Add(sum, termVal)
+
+		// Optionally, add a breaking condition for infinite series to prevent endless loop
+		if isInfinity {
+			// Example breaking condition: termVal is too small
+			if termVal.Abs(termVal).Cmp(big.NewFloat(1e-10)) < 0 {
+				break
+			}
+		}
+	}
+
+	// Clean up the variable context after evaluation
+	delete(variableContext, node.Variable)
+
+	return sum, nil
+}
+
+func setVariableContext(variableName string, value *big.Float) {
+	variableContext[variableName] = value
+}
+
+// ParseAndReturnString parses the expression and returns its result as a string.
+func ParseAndReturnString(expression string) (string, error) {
+	result, err := parse(expression)
+	if err != nil {
+		return "", err
+	}
+	// Using String() to get the exact representation without precision loss.
+	return result.String(), nil
+}
+
+// ParseAndReturnBigDecimal parses the expression and returns its result as a *big.Float.
+func ParseAndReturnBigDecimal(expression string) (*big.Float, error) {
+	return parse(expression) // Directly return the *big.Float result.
+}
+
+// ParseAndReturnBytes parses the expression and returns its result as bytes.
+func ParseAndReturnBytes(expression string) ([]byte, error) {
+	result, err := parse(expression)
+	if err != nil {
+		return nil, err
+	}
+	// Marshalling the *big.Float into bytes.
+	return result.GobEncode()
+}
+
+// InvokeCustomFunctionOrAction tries to execute a function or action by name.
+func InvokeCustomFunctionOrAction(name string, precision uint, args ...*big.Float) ([]*big.Float, error) {
+	// First, check if it's a mathematical function with a known signature.
+	if function, ok := customFuncsMap[name]; ok {
+		result, err := function(precision, args...)
+		if err != nil {
+			return nil, err
+		}
+		// Wrap single *big.Float result in a slice for a unified interface.
+		return []*big.Float{result}, nil
+	}
+
+	// Next, check if it's a custom action which we assume returns a slice of *big.Float for this example.
+	if action, ok := customActionsMap[name]; ok {
+		// Assuming all actions follow a specific signature for this example.
+		actionFunc, ok := action.(func(precision uint, args ...*big.Float) ([]*big.Float, error))
+		if !ok {
+			return nil, fmt.Errorf("action '%s' does not match the expected signature", name)
+		}
+		return actionFunc(precision, args...)
+	}
+
+	return nil, fmt.Errorf("no function or action named '%s' found", name)
 }
