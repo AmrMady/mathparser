@@ -6,6 +6,7 @@ import (
 	"github.com/AmrMady/mathparser/parser/customFunctions/advancedMathematicalFunctions"
 	"github.com/AmrMady/mathparser/parser/customFunctions/basicMathematicalFunctions"
 	"github.com/AmrMady/mathparser/parser/customFunctions/computationalFunctions"
+	"math"
 	"math/big"
 	"sort"
 	"strings"
@@ -43,6 +44,10 @@ var (
 	customActionsMap = make(map[string]interface{}) // For operations/actions with different signatures
 	variableContext  = map[string]*big.Float{}
 )
+var constants = map[string]*big.Float{
+	"pi": new(big.Float).SetPrec(precision).SetFloat64(math.Pi),
+	"e":  new(big.Float).SetPrec(precision).SetFloat64(math.E),
+}
 
 // RegisterCustomFunction for mathematical operations with a specific signature
 func RegisterCustomFunction(name string, function func(precision uint, args ...*big.Float) (*big.Float, error)) {
@@ -106,15 +111,25 @@ func (p *Parser) advance() {
 		p.prevToken = &p.currentToken
 	}
 	p.currentToken = p.lexer.NextToken()
+	fmt.Printf("Advanced to next token: %v\n", p.currentToken)
 }
 
 func (p *Parser) expect(tokenType int) bool {
-	if p.currentToken.Type == tokenType {
+	result := p.currentToken.Type == tokenType
+	fmt.Printf("Expecting token %d, found %d: %v\n", tokenType, p.currentToken.Type, result)
+	if result {
 		p.advance()
-		return true
 	}
-	return false
+	return result
 }
+
+//func (p *Parser) expect(tokenType int) bool {
+//	if p.currentToken.Type == tokenType {
+//		p.advance()
+//		return true
+//	}
+//	return false
+//}
 
 func (p *Parser) isUnaryMinusContext() bool {
 	// True if it's the start of the expression.
@@ -130,60 +145,32 @@ func (p *Parser) isUnaryMinusContext() bool {
 }
 
 func (p *Parser) parseExpression() (Node, error) {
-	var left Node
-	var err error
-
-	// Check if the current token is 'sum of' to handle summation
-	if p.currentToken.Type == TOKEN_SUM_OF {
-		// Directly call parseSummation() without consuming 'sum of' here, as it will be consumed inside parseSummation()
-		left, err = p.parseSummation()
-		if err != nil {
-			return nil, err
-		}
-	} else {
-		// Handle other types of expressions as before
-		left, err = p.parseTerm()
-		if err != nil {
-			return nil, err
-		}
+	// Parse the first part of the expression
+	left, err := p.parseTerm()
+	if err != nil {
+		return nil, err
 	}
 
-	// Process binary operations with their precedence.
+	// Continuously parse binary operations, which consist of an operator followed by another term
 	for p.isOperatorToken(p.currentToken.Type) {
-		currentPrecedence := p.getPrecedence(p.currentToken.Type)
-		nextToken := p.peekToken()
-		nextPrecedence := p.getPrecedence(nextToken.Type)
+		// Store the current operator
+		opType := p.currentToken.Type
+		opValue := p.tokenTypeToString(opType)
 
-		// If the next operation has higher precedence, recursively parse the right-hand side as a new expression.
-		// This ensures that operations like multiplication/division are evaluated before addition/subtraction.
-		if currentPrecedence < nextPrecedence {
-			p.advance() // Move past the current operator to the next part of the expression
+		// Advance past the operator to parse the next term
+		p.advance()
 
-			right, err := p.parseExpression() // Recursively parse the right-hand side as a new expression
-			if err != nil {
-				return nil, err
-			}
+		// Parse the next term in the expression
+		right, err := p.parseTerm()
+		if err != nil {
+			return nil, err
+		}
 
-			left = &BinaryOpNode{
-				Left:  left,
-				Op:    p.tokenTypeToString(p.prevToken.Type), // Use prevToken because advance() moved us forward
-				Right: right,
-			}
-		} else {
-			// For operators of the same precedence or lower, proceed with the current understanding.
-			opType := p.currentToken.Type
-			p.advance() // Move past the operator
-
-			right, err := p.parseTerm()
-			if err != nil {
-				return nil, err
-			}
-
-			left = &BinaryOpNode{
-				Left:  left,
-				Op:    p.tokenTypeToString(opType),
-				Right: right,
-			}
+		// Combine the current expression with the new term using the operator
+		left = &BinaryOpNode{
+			Left:  left,
+			Op:    opValue,
+			Right: right,
 		}
 	}
 
@@ -257,19 +244,64 @@ func (p *Parser) parseSumSeries() Node {
 	}
 }
 
+//func (p *Parser) parseTerm() (Node, error) {
+//	// First handle any unary minus cases
+//	if p.currentToken.Type == TOKEN_MINUS && p.isUnaryMinusContext() {
+//		p.advance()                      // Consume the unary minus
+//		operand, err := p.parsePrimary() // Now directly parsing primary to handle factorials
+//		if err != nil {
+//			return nil, err
+//		}
+//		return &UnaryOpNode{Op: "-", Operand: operand}, nil
+//	}
+//
+//	// For other cases, directly parse primary expressions (which includes factorial handling)
+//	return p.parsePrimary()
+//}
+
 func (p *Parser) parseTerm() (Node, error) {
-	// First handle any unary minus cases
-	if p.currentToken.Type == TOKEN_MINUS && p.isUnaryMinusContext() {
-		p.advance()                      // Consume the unary minus
-		operand, err := p.parsePrimary() // Now directly parsing primary to handle factorials
-		if err != nil {
-			return nil, err
-		}
-		return &UnaryOpNode{Op: "-", Operand: operand}, nil
+	left, err := p.parseFactorial()
+	if err != nil {
+		return nil, err
 	}
 
-	// For other cases, directly parse primary expressions (which includes factorial handling)
-	return p.parsePrimary()
+	// While there are implicit multiplication scenarios or explicit multiplication/division tokens
+	for p.currentToken.Type == TOKEN_IDENTIFIER || p.peekToken().Type == TOKEN_LPAREN || p.isMultiplicationOrDivisionToken(p.currentToken.Type) {
+		// Handle implicit multiplication
+		if p.currentToken.Type == TOKEN_IDENTIFIER || p.peekToken().Type == TOKEN_LPAREN {
+			// Implicit multiplication detected, e.g., "2x" or "2(x)"
+			right, err := p.parseFactorial()
+			if err != nil {
+				return nil, err
+			}
+			left = &BinaryOpNode{
+				Left:  left,
+				Op:    "*", // Implicit multiplication
+				Right: right,
+			}
+		} else if p.isMultiplicationOrDivisionToken(p.currentToken.Type) {
+			// Explicit multiplication/division, proceed as usual
+			opType := p.currentToken.Type
+			p.advance() // Move past the operator
+
+			right, err := p.parseFactorial()
+			if err != nil {
+				return nil, err
+			}
+
+			left = &BinaryOpNode{
+				Left:  left,
+				Op:    p.tokenTypeToString(opType),
+				Right: right,
+			}
+		}
+	}
+
+	return left, nil
+}
+
+func (p *Parser) isMultiplicationOrDivisionToken(tokenType int) bool {
+	return tokenType == TOKEN_ASTERISK || tokenType == TOKEN_SLASH
 }
 
 // Improved version of parseSummationExpression to handle 'infinity' and variable substitutions.
@@ -440,7 +472,9 @@ func (p *Parser) parseOperand() (Node, error) {
 }
 
 func (p *Parser) parseFunctionCall() (Node, error) {
+	fmt.Println("Parsing function call")
 	funcName := p.currentToken.Value
+	fmt.Printf("Parsed function call: %v\n", funcName)
 	p.advance() // Move past the function name to the '('
 
 	var args []Node
@@ -584,6 +618,10 @@ func ParseWithVariablesAndReturnString(expression string, variables map[string]f
 
 // parse is an unexported helper function to handle the common parsing logic.
 func parse(expression string) (*big.Float, error) {
+
+	for name, value := range constants {
+		expression = strings.Replace(expression, name, value.Text('f', -1), -1)
+	}
 	lexer := NewLexer(expression) // Initialize the lexer with the expression.
 	parser := NewParser(lexer)    // Create a new parser instance with the lexer.
 
@@ -591,7 +629,7 @@ func parse(expression string) (*big.Float, error) {
 	parser.advance()
 
 	// Parse the expression to generate the AST. Adjust this to your actual parse method.
-	ast, err := parser.parseExpression() // Assuming this method exists and is implemented correctly.
+	ast, err := parser.Parse() // Assuming this method exists and is implemented correctly.
 	if err != nil {
 		fmt.Println("parse error: AST generation failed, error: ", err)
 		return nil, fmt.Errorf("parse error: AST generation failed, error: %v", err)
@@ -600,6 +638,56 @@ func parse(expression string) (*big.Float, error) {
 
 	// Evaluate the AST and return the result.
 	return evaluate(ast)
+}
+
+// ParseAndReturnString parses the expression and returns its result as a string.
+func ParseAndReturnString(expression string) (string, error) {
+	result, err := parse(expression)
+	if err != nil {
+		return "", err
+	}
+	// Using String() to get the exact representation without precision loss.
+	return result.String(), nil
+}
+
+// ParseAndReturnBigDecimal parses the expression and returns its result as a *big.Float.
+func ParseAndReturnBigDecimal(expression string) (*big.Float, error) {
+	return parse(expression) // Directly return the *big.Float result.
+}
+
+// ParseAndReturnBytes parses the expression and returns its result as bytes.
+func ParseAndReturnBytes(expression string) ([]byte, error) {
+	result, err := parse(expression)
+	if err != nil {
+		return nil, err
+	}
+	// Marshalling the *big.Float into bytes.
+	return result.GobEncode()
+}
+
+// InvokeCustomFunctionOrAction tries to execute a function or action by name.
+func InvokeCustomFunctionOrAction(name string, precision uint, args ...*big.Float) ([]*big.Float, error) {
+	// First, check if it's a mathematical function with a known signature.
+	if function, ok := customFuncsMap[name]; ok {
+		result, err := function(precision, args...)
+		if err != nil {
+			return nil, err
+		}
+		// Wrap single *big.Float result in a slice for a unified interface.
+		return []*big.Float{result}, nil
+	}
+
+	// Next, check if it's a custom action which we assume returns a slice of *big.Float for this example.
+	if action, ok := customActionsMap[name]; ok {
+		// Assuming all actions follow a specific signature for this example.
+		actionFunc, ok := action.(func(precision uint, args ...*big.Float) ([]*big.Float, error))
+		if !ok {
+			return nil, fmt.Errorf("action '%s' does not match the expected signature", name)
+		}
+		return actionFunc(precision, args...)
+	}
+
+	return nil, fmt.Errorf("no function or action named '%s' found", name)
 }
 
 func substituteVariables(expression string, variables map[string]float64) string {
@@ -652,7 +740,32 @@ func evaluate(node Node) (*big.Float, error) {
 		}
 
 	case *SummationNode:
-		return evaluateSummationNode(n)
+		sum := big.NewFloat(0).SetPrec(precision)
+		startVal, err := evaluate(n.Start)
+		if err != nil {
+			return nil, err
+		}
+		endVal, err := evaluate(n.End)
+		if err != nil {
+			return nil, err
+		}
+		// Convert startVal and endVal to integers for iteration
+		startInt, _ := startVal.Int64()
+		endInt, _ := endVal.Int64()
+		for i := startInt; i <= endInt; i++ {
+			// Substitute the variable with its current value
+			currentVal := new(big.Float).SetInt64(i)
+			variableContext[n.Variable] = currentVal
+			termVal, err := evaluate(n.Expression)
+			if err != nil {
+				return nil, err
+			}
+			sum.Add(sum, termVal)
+		}
+		return sum, nil
+
+	//case *SummationNode:
+	//	return evaluateSummationNode(n)
 
 	case *ConstantNode:
 		fmt.Println("ConstantNode n: ", n)
@@ -704,14 +817,18 @@ func evaluate(node Node) (*big.Float, error) {
 			fmt.Println("BinaryOpNode's left or right child is nil")
 			return nil, fmt.Errorf("BinaryOpNode's left or right child is nil")
 		}
+		fmt.Println("Evaluating BinaryOpNode:", n.Op)
 		leftVal, err := evaluate(n.Left)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("error evaluating left operand: %v", err)
 		}
+		fmt.Printf("Left operand value: %v\n", leftVal)
+
 		rightVal, err := evaluate(n.Right)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("error evaluating right operand: %v", err)
 		}
+		fmt.Printf("Right operand value: %v\n", rightVal)
 
 		switch n.Op {
 		case "+":
@@ -752,98 +869,61 @@ func evaluate(node Node) (*big.Float, error) {
 	}
 }
 
-func evaluateSummationNode(node *SummationNode) (*big.Float, error) {
-	sum := big.NewFloat(0).SetPrec(precision)
-	startVal, err := evaluate(node.Start)
-	if err != nil {
-		return nil, err
-	}
+//func evaluateWithVariables(node Node, variables map[string]*big.Float) (*big.Float, error) {
+//	// Temporary backup the original variable context
+//	originalContext := make(map[string]*big.Float)
+//	for k, v := range variableContext {
+//		originalContext[k] = new(big.Float).Set(v)
+//	}
+//
+//	// Update the variable context with the provided variables for this evaluation
+//	for k, v := range variables {
+//		variableContext[k] = v
+//	}
+//
+//	// Evaluate the node with the updated context
+//	result, err := evaluate(node)
+//
+//	// Restore the original variable context
+//	variableContext = originalContext
+//
+//	return result, err
+//}
 
-	var endVal *big.Float
-	isInfinity := false
-	if _, ok := node.End.(*InfinityNode); ok {
-		isInfinity = true
-	} else {
-		endVal, err = evaluate(node.End)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	k := new(big.Float).Set(startVal)
-	for ; isInfinity || k.Cmp(endVal) <= 0; k.Add(k, big.NewFloat(1)) {
-		setVariableContext(node.Variable, k)
-		termVal, err := evaluate(node.Expression)
-		if err != nil {
-			return nil, err
-		}
-		sum.Add(sum, termVal)
-
-		// Optionally, add a breaking condition for infinite series to prevent endless loop
-		if isInfinity {
-			// Example breaking condition: termVal is too small
-			if termVal.Abs(termVal).Cmp(big.NewFloat(1e-10)) < 0 {
-				break
-			}
-		}
-	}
-
-	// Clean up the variable context after evaluation
-	delete(variableContext, node.Variable)
-
-	return sum, nil
-}
-
-func setVariableContext(variableName string, value *big.Float) {
-	variableContext[variableName] = value
-}
-
-// ParseAndReturnString parses the expression and returns its result as a string.
-func ParseAndReturnString(expression string) (string, error) {
-	result, err := parse(expression)
-	if err != nil {
-		return "", err
-	}
-	// Using String() to get the exact representation without precision loss.
-	return result.String(), nil
-}
-
-// ParseAndReturnBigDecimal parses the expression and returns its result as a *big.Float.
-func ParseAndReturnBigDecimal(expression string) (*big.Float, error) {
-	return parse(expression) // Directly return the *big.Float result.
-}
-
-// ParseAndReturnBytes parses the expression and returns its result as bytes.
-func ParseAndReturnBytes(expression string) ([]byte, error) {
-	result, err := parse(expression)
-	if err != nil {
-		return nil, err
-	}
-	// Marshalling the *big.Float into bytes.
-	return result.GobEncode()
-}
-
-// InvokeCustomFunctionOrAction tries to execute a function or action by name.
-func InvokeCustomFunctionOrAction(name string, precision uint, args ...*big.Float) ([]*big.Float, error) {
-	// First, check if it's a mathematical function with a known signature.
-	if function, ok := customFuncsMap[name]; ok {
-		result, err := function(precision, args...)
-		if err != nil {
-			return nil, err
-		}
-		// Wrap single *big.Float result in a slice for a unified interface.
-		return []*big.Float{result}, nil
-	}
-
-	// Next, check if it's a custom action which we assume returns a slice of *big.Float for this example.
-	if action, ok := customActionsMap[name]; ok {
-		// Assuming all actions follow a specific signature for this example.
-		actionFunc, ok := action.(func(precision uint, args ...*big.Float) ([]*big.Float, error))
-		if !ok {
-			return nil, fmt.Errorf("action '%s' does not match the expected signature", name)
-		}
-		return actionFunc(precision, args...)
-	}
-
-	return nil, fmt.Errorf("no function or action named '%s' found", name)
-}
+//func evaluateSummationNode(node *SummationNode) (*big.Float, error) {
+//	sum := big.NewFloat(0).SetPrec(precision)
+//	startVal, err := evaluate(node.Start)
+//	if err != nil {
+//		return nil, err
+//	}
+//
+//	var endVal *big.Float
+//	isInfinity := false
+//	if _, ok := node.End.(*InfinityNode); ok {
+//		isInfinity = true
+//	} else {
+//		endVal, err = evaluate(node.End)
+//		if err != nil {
+//			return nil, err
+//		}
+//	}
+//
+//	k := new(big.Float).Set(startVal)
+//	for ; isInfinity || k.Cmp(endVal) <= 0; k.Add(k, big.NewFloat(1)) {
+//		// Create a temporary variable map for this iteration
+//		tempVars := map[string]*big.Float{node.Variable: new(big.Float).Set(k)}
+//		termVal, err := evaluateWithVariables(node.Expression, tempVars)
+//		if err != nil {
+//			return nil, err
+//		}
+//		sum.Add(sum, termVal)
+//
+//		if isInfinity {
+//			if termVal.Abs(termVal).Cmp(big.NewFloat(1e-10)) < 0 {
+//				break
+//			}
+//		}
+//	}
+//
+//	return sum, nil
+//}

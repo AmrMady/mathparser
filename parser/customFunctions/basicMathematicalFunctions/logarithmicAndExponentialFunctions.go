@@ -11,34 +11,46 @@ func Log(precision uint, args ...*big.Float) (*big.Float, error) {
 		return nil, fmt.Errorf("log requires exactly one argument")
 	}
 	x := args[0]
-	if x.SetPrec(precision).Cmp(big.NewFloat(1)) == 0 {
+	if x.Cmp(big.NewFloat(1)) == 0 {
 		return big.NewFloat(0), nil
 	}
 
+	// Ensure the precision is set for all calculations
+	x = new(big.Float).SetPrec(precision).Set(x)
+	one := new(big.Float).SetPrec(precision).SetFloat64(1)
+
+	// Improved accuracy for (x-1)/(x+1)
+	xMinusOne := new(big.Float).Sub(x, one)
+	xPlusOne := new(big.Float).Add(x, one)
+	fraction := new(big.Float).Quo(xMinusOne, xPlusOne)
+
 	result := new(big.Float).SetPrec(precision)
 	term := new(big.Float).SetPrec(precision)
-	one := big.NewFloat(1).SetPrec(precision)
+	fractionSquared := new(big.Float).Mul(fraction, fraction)
 
-	// (x-1)/(x+1)
-	xMinusOne := new(big.Float).SetPrec(precision).Sub(x, one)
-	xPlusOne := new(big.Float).SetPrec(precision).Add(x, one)
-	fraction := new(big.Float).SetPrec(precision).Quo(xMinusOne, xPlusOne)
-
-	fractionSquared := new(big.Float).SetPrec(precision).Mul(fraction, fraction)
-
-	for i := int64(1); i < 100; i += 2 {
-		// Calculate each term
+	// Using a more efficient series calculation
+	for n := int64(1); ; n += 2 {
 		var err error
-		exponent := new(big.Float).SetInt64(i).SetPrec(precision)
-		term, err = BinaryExponentiation(precision, fractionSquared, exponent) // (fraction^2)^n
+		exponent := new(big.Float).SetInt64(n)
+		// Calculate (fraction^2)^(n) directly without using BinaryExponentiation for each term
+		term, err = Exp(precision, fractionSquared, exponent)
 		if err != nil {
-			return nil, err
+			return big.NewFloat(0), nil
 		}
-		term.SetPrec(precision).Quo(term, big.NewFloat(float64(i)).SetPrec(precision)) // term / n
-		result.Add(result, term)
+		term.Quo(term, new(big.Float).SetPrec(precision).SetFloat64(float64(n))) // term/n
+		if n%4 == 1 {
+			result.Add(result, term)
+		} else {
+			result.Sub(result, term)
+		}
+
+		// Break if the term is sufficiently small to ensure convergence
+		if term.Abs(term).Cmp(new(big.Float).SetPrec(precision).SetFloat64(1e-10)) <= 0 {
+			break
+		}
 	}
-	result.SetPrec(precision).Mul(result, big.NewFloat(2)) // Multiply the sum by 2
-	result.SetPrec(precision).Add(result, fraction)        // Add the first term of the series
+	result.Mul(result, big.NewFloat(2))                   // Multiply the sum by 2
+	result.Add(result, new(big.Float).Quo(fraction, one)) // Add the first term of the series
 
 	return result, nil
 }
@@ -52,8 +64,8 @@ func Exp(precision uint, args ...*big.Float) (*big.Float, error) { // exponentia
 	term := new(big.Float).SetPrec(precision).SetFloat64(1)
 
 	for i := 1; i < 20; i++ {
-		term.SetPrec(precision).Mul(term, x)                                                             // x^i
-		term.SetPrec(precision).Quo(term, new(big.Float).SetPrec(precision).SetInt(factorial(int64(i)))) // x^i / i!
+		term.SetPrec(precision).Mul(term, x)                                                      // x^i
+		term.SetPrec(precision).Quo(term, new(big.Float).SetInt(factorial(big.NewInt(int64(i))))) // x^i / i!
 		result.Add(result, term)
 	}
 

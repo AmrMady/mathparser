@@ -4,12 +4,12 @@ import (
 	"math/big"
 )
 
-func factorial(n int64) *big.Int {
-	f := big.NewInt(1)
-	for i := int64(1); i <= n; i++ {
-		f.Mul(f, big.NewInt(i))
+func factorial(n *big.Int) *big.Int {
+	one := big.NewInt(1)
+	if n.Cmp(one) == 0 || n.Cmp(big.NewInt(0)) == 0 {
+		return one
 	}
-	return f
+	return new(big.Int).Mul(n, factorial(new(big.Int).Sub(n, one)))
 }
 
 func BinaryExponentiation(precision uint, base, exponent *big.Float) (*big.Float, error) {

@@ -12,24 +12,23 @@ func Sin(precision uint, args ...*big.Float) (*big.Float, error) {
 	}
 	x := args[0]
 	result := new(big.Float).SetPrec(precision)
-	term := new(big.Float).SetPrec(precision)
+	xPowerI := new(big.Float).SetPrec(precision).Copy(x) // x^i, starts as x^1
+	factorialI := big.NewInt(1)                          // i!, starts as 1!
 
-	for i, sign := 0, int64(1); i < 20; i, sign = i+1, -sign {
-		n := 2*i + 1
-		nBig := new(big.Float).SetPrec(precision).SetInt64(int64(n))
-		factorialN := new(big.Float).SetInt(factorial(int64(n)))
-		var err error
-		term, err = BinaryExponentiation(precision, x, nBig) // x^n
-		if err != nil {
-			return nil, err
+	for i := int64(1); ; i += 2 {
+		term := new(big.Float).SetPrec(precision).Quo(xPowerI, new(big.Float).SetInt(factorialI))
+		if i/2%2 != 0 { // Subtract term if i is odd
+			result.Sub(result, term)
+		} else { // Add term if i is even
+			result.Add(result, term)
 		}
-		term.Quo(term, factorialN)                  // x^n / n!
-		term.Mul(term, big.NewFloat(float64(sign))) // Apply sign
 
-		result.Add(result, term)
+		// Prepare next term
+		xPowerI.Mul(xPowerI, x).Mul(xPowerI, x)                                      // x^(i+2)
+		factorialI.Mul(factorialI, big.NewInt(i+1)).Mul(factorialI, big.NewInt(i+2)) // (i+1)! * (i+2)!
 
-		// Break if the added term is less than a predefined small threshold
-		if term.Abs(term).Cmp(big.NewFloat(1e-50)) == -1 {
+		// Break if the term is sufficiently small
+		if term.Abs(term).Cmp(new(big.Float).SetPrec(precision).SetFloat64(1e-10)) <= 0 {
 			break
 		}
 	}
@@ -42,24 +41,27 @@ func Cos(precision uint, args ...*big.Float) (*big.Float, error) {
 		return nil, fmt.Errorf("cos requires exactly one argument")
 	}
 	x := args[0]
-	result := new(big.Float).SetPrec(precision).SetFloat64(1) // Start with 1
-	term := new(big.Float).SetPrec(precision)
+	result := new(big.Float).SetPrec(precision).SetFloat64(1) // Initialize result with the first term of the series
+	xSquared := new(big.Float).SetPrec(precision).Mul(x, x)   // x^2 to be used in the loop
+	xTerm := new(big.Float).SetPrec(precision).SetFloat64(1)  // x^0 = 1 for the first term
+	sign := int64(-1)                                         // Sign starts as negative for the second term
 
-	for i, sign := 1, int64(-1); i < 20; i += 2 {
-		n := int64(i + 1)
-		nBig := new(big.Float).SetPrec(precision).SetInt64(n)
-		factorialN := new(big.Float).SetInt(factorial(n))
-		var err error
-		term, err = BinaryExponentiation(precision, x, nBig) // x^n
-		if err != nil {
-			return nil, err
+	for i := int64(2); ; i += 2 {
+		xTerm.Mul(xTerm, xSquared) // xTerm *= x^2 to get x^i
+		factI := new(big.Float).SetPrec(precision).SetInt(factorial(big.NewInt(i)))
+		term := new(big.Float).SetPrec(precision).Quo(xTerm, factI) // (x^i) / i!
+
+		if sign == -1 {
+			result.Sub(result, term)
+		} else {
+			result.Add(result, term)
 		}
-		term.Quo(term, factorialN)                  // x^n / n!
-		term.Mul(term, big.NewFloat(float64(sign))) // Apply sign
+		sign *= -1 // Alternate sign
 
-		result.Add(result, term)
-
-		sign = -sign // Flip sign for next term
+		// Break if the term is sufficiently small to ensure convergence
+		if term.Abs(term).Cmp(new(big.Float).SetPrec(precision).SetFloat64(1e-50)) <= 0 {
+			break
+		}
 	}
 
 	return result, nil
@@ -77,7 +79,7 @@ func Tan(precision uint, args ...*big.Float) (*big.Float, error) {
 	if err != nil {
 		return nil, err
 	}
-	result := new(big.Float).Quo(sine, cosine) // tan(x) = sin(x) / cos(x)
+	result := new(big.Float).SetPrec(precision).Quo(sine, cosine) // tan(x) = sin(x) / cos(x)
 	return result, nil
 }
 

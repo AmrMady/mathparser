@@ -7,14 +7,18 @@ import (
 	"math/big"
 )
 
-func main() {
-	piString, err := parser.ParseAndReturnString("4 * (sum of ((-1)^k / (2*k + 1) * (1/16)^k) from k=0 to infinity)")
+func main2() {
+
+	result, err := parser.ParseAndReturnString("sin(pi/6) + log(e^2) + sqrt(16) * 3")
 	if err != nil {
 		fmt.Println("ParseAndReturnString::Error:", err)
 		return
 	}
 
-	fmt.Println("Pi as String:", piString)
+	fmt.Println("result as String:", result)
+
+	//sin(pi/6) + log(e^2) + sqrt(16)*3
+	//exp(1) * (cos(0) + tan(pi/4))
 
 	//expression := "x * y + (z - w) / a"
 	//
@@ -73,11 +77,11 @@ func CalculatePiBBP(iterations int) (*big.Float, error) {
 	return pi, nil
 }
 
-func main2() {
-	//res, err := CalculatePiBBP(1000)
-	//if err != nil {
-	//	fmt.Println("CalculatePiBBP::Error:", err)
-	//	return
-	//}
-	//fmt.Println("Pi as String:", res.Text('f', -1))
+func main() {
+	res, err := CalculatePiBBP(1000)
+	if err != nil {
+		fmt.Println("CalculatePiBBP::Error:", err)
+		return
+	}
+	fmt.Println("Pi as String:", res.Text('f', -1))
 }
