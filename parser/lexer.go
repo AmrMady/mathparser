@@ -16,6 +16,15 @@ type InputToken struct {
 	Value string
 }
 
+func (t *InputToken) isOperatorToken() bool {
+	switch t.Type {
+	case TOKEN_PLUS, TOKEN_MINUS, TOKEN_ASTERISK, TOKEN_SLASH, TOKEN_CARET:
+		return true
+	default:
+		return false
+	}
+}
+
 // Lexer breaks the input into tokens.
 type Lexer struct {
 	input         string

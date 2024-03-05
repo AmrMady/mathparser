@@ -7,9 +7,9 @@ import (
 	"math/big"
 )
 
-func main2() {
+func main() {
 
-	result, err := parser.ParseAndReturnString("sin(pi/6) + log(e^2) + sqrt(16) * 3")
+	result, err := parser.ParseAndReturnString("sin(pi/6) + log(e^2) + (sqrt(16) * 3)")
 	if err != nil {
 		fmt.Println("ParseAndReturnString::Error:", err)
 		return
@@ -17,28 +17,30 @@ func main2() {
 
 	fmt.Println("result as String:", result)
 
-	//sin(pi/6) + log(e^2) + sqrt(16)*3
-	//exp(1) * (cos(0) + tan(pi/4))
-
-	//expression := "x * y + (z - w) / a"
-	//
-	//// Define variables and their values
-	//variables := map[string]float64{
-	//	"x": 5.5,
-	//	"y": 4,
-	//	"z": 20,
-	//	"w": 15,
-	//	"a": 2.5,
-	//}
-	//
-	//// Parse and evaluate the expression with variables
-	//result, err := parser.ParseWithVariables(expression, variables)
-	//if err != nil {
-	//	fmt.Println("Error:", err)
-	//	return
-	//}
-	//fmt.Printf("Result of '%s': %f\n", expression, result)
 }
+
+//sin(pi/6) + log(e^2) + sqrt(16)*3
+//exp(1) * (cos(0) + tan(pi/4))
+//"exp(1) * (cos(0) + tan(pi/4))"
+
+//expression := "x * y + (z - w) / a"
+//
+//// Define variables and their values
+//variables := map[string]float64{
+//	"x": 5.5,
+//	"y": 4,
+//	"z": 20,
+//	"w": 15,
+//	"a": 2.5,
+//}
+//
+//// Parse and evaluate the expression with variables
+//result, err := parser.ParseWithVariables(expression, variables)
+//if err != nil {
+//	fmt.Println("Error:", err)
+//	return
+//}
+//fmt.Printf("Result of '%s': %f\n", expression, result)
 
 func CalculatePiBBP(iterations int) (*big.Float, error) {
 	precision := uint(512)
@@ -77,7 +79,7 @@ func CalculatePiBBP(iterations int) (*big.Float, error) {
 	return pi, nil
 }
 
-func main() {
+func main2() {
 	res, err := CalculatePiBBP(1000)
 	if err != nil {
 		fmt.Println("CalculatePiBBP::Error:", err)
